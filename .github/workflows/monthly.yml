@@ -1,19 +1,28 @@
 name: Monthly Menu
 
 on:
-  schedule:
-    - cron: "0 0 1 * *"
   workflow_dispatch:
+  schedule:
+    - cron: "0 0 1 * *"  # 毎月1日 0:00（UTC）
 
 jobs:
-  run:
+  build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - run: pip install ics requests
-      - run: python generate_menu.py
+      - name: Install dependencies
+        run: pip install requests python-dateutil
+
+      - name: Run script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: python generate_menu.py
