@@ -1,8 +1,10 @@
 import os
+import subprocess
 import requests
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 PAGE_ID = os.environ["NOTION_PAGE_ID"]
+GITHUB_REPO = os.environ["GITHUB_REPOSITORY"]
 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -10,22 +12,17 @@ HEADERS = {
     "Content-Type": "application/json",
 }
 
-def upload_ics():
-    # Step 1: upload URL取得
-    res = requests.post("https://api.notion.com/v1/files", headers=HEADERS)
-    res.raise_for_status()
-    data = res.json()
+def commit_ics():
+    subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
+    subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
+    subprocess.run(["git", "add", "menu.ics"], check=True)
+    subprocess.run(["git", "commit", "-m", "Update menu.ics"], check=True)
+    subprocess.run(["git", "push"], check=True)
 
-    upload_url = data["upload_url"]
-    file_id = data["id"]
+def post_to_notion():
+    raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/menu.ics"
 
-    # Step 2: ファイルアップロード
-    with open("menu.ics", "rb") as f:
-        up = requests.post(upload_url, files={"file": f})
-        up.raise_for_status()
-
-    # Step 3: ページにファイルブロック追加
-    block_url = f"https://api.notion.com/v1/blocks/{PAGE_ID}/children"
+    url = f"https://api.notion.com/v1/blocks/{PAGE_ID}/children"
     payload = {
         "children": [
             {
@@ -34,17 +31,20 @@ def upload_ics():
                 "file": {
                     "type": "external",
                     "external": {
-                        "url": f"https://api.notion.com/v1/files/{file_id}"
+                        "url": raw_url
                     }
                 }
             }
         ]
     }
 
-    res = requests.patch(block_url, headers=HEADERS, json=payload)
+    res = requests.patch(url, headers=HEADERS, json=payload)
     res.raise_for_status()
 
-    print("menu.ics uploaded to Notion")
+def main():
+    commit_ics()
+    post_to_notion()
+    print("menu.ics linked to Notion")
 
 if __name__ == "__main__":
-    upload_ics()
+    main()
