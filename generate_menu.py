@@ -24,7 +24,7 @@ NOTION_HEADERS = {
 }
 
 # ===============================
-# 次の月
+# 次月取得
 # ===============================
 
 def get_next_month():
@@ -37,12 +37,12 @@ def get_next_month():
     return year, month
 
 # ===============================
-# Notionから献立取得（材料・レシピ含む）
+# Notionから献立取得
+# 魚判定 = 名前に「魚」が含まれる
 # ===============================
 
-def get_menu_list_from_notion():
+def get_menu_list():
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
-
     menus = []
     has_more = True
     next_cursor = None
@@ -59,9 +59,10 @@ def get_menu_list_from_notion():
         for item in data["results"]:
             props = item["properties"]
 
-            name = ""
-            if props["名前"]["title"]:
-                name = props["名前"]["title"][0]["plain_text"]
+            if not props["名前"]["title"]:
+                continue
+
+            name = props["名前"]["title"][0]["plain_text"]
 
             materials = ""
             if props["材料"]["rich_text"]:
@@ -71,12 +72,12 @@ def get_menu_list_from_notion():
             if props["レシピ"]["rich_text"]:
                 recipe = props["レシピ"]["rich_text"][0]["plain_text"]
 
-            if name:
-                menus.append({
-                    "name": name,
-                    "materials": materials,
-                    "recipe": recipe
-                })
+            menus.append({
+                "name": name,
+                "materials": materials,
+                "recipe": recipe,
+                "is_fish": "魚" in name  # ← ここが魚判定
+            })
 
         has_more = data["has_more"]
         next_cursor = data.get("next_cursor")
@@ -87,29 +88,65 @@ def get_menu_list_from_notion():
     return menus
 
 # ===============================
-# 一巡方式（重複なし）
+# 月間献立生成
+# ・平日(月〜金)に魚2回
+# ・魚連続禁止
+# ・一巡方式
 # ===============================
 
 def generate_menu(menus, year, month):
     days_in_month = calendar.monthrange(year, month)[1]
+    start_date = date(year, month, 1)
+
+    fish_master = [m for m in menus if m["is_fish"]]
+    other_master = [m for m in menus if not m["is_fish"]]
+
+    if len(fish_master) < 2:
+        raise ValueError("魚メニューが2つ以上必要です")
+
+    fish_pool = fish_master.copy()
+    other_pool = other_master.copy()
+
+    random.shuffle(fish_pool)
+    random.shuffle(other_pool)
 
     result = []
-    pool = menus.copy()
-    random.shuffle(pool)
+    last_was_fish = False
 
-    for _ in range(days_in_month):
+    for i in range(days_in_month):
+        current_date = start_date + timedelta(days=i)
+        weekday = current_date.weekday()  # 月0〜日6
 
-        if not pool:
-            pool = menus.copy()
-            random.shuffle(pool)
+        # 月曜ならその週の魚配置を決定
+        if weekday == 0:
+            weekly_fish_days = random.sample([0,1,2,3,4], 2)
 
-        pick = pool.pop(0)
+        use_fish = False
+        if weekday < 5 and weekday in weekly_fish_days:
+            use_fish = True
+
+        if use_fish and not last_was_fish:
+            if not fish_pool:
+                fish_pool = fish_master.copy()
+                random.shuffle(fish_pool)
+
+            pick = fish_pool.pop()
+            last_was_fish = True
+
+        else:
+            if not other_pool:
+                other_pool = other_master.copy()
+                random.shuffle(other_pool)
+
+            pick = other_pool.pop()
+            last_was_fish = False
+
         result.append(pick)
 
     return result
 
 # ===============================
-# ICS作成（DESCRIPTION追加）
+# ICS作成
 # ===============================
 
 def create_ics(sequence, year, month):
@@ -125,7 +162,13 @@ def create_ics(sequence, year, month):
             event_date = start_date + timedelta(days=i)
             date_str = event_date.strftime("%Y%m%d")
 
-            description = f"【材料】\\n{menu['materials']}\\n\\n【レシピ】\\n{menu['recipe']}"
+            description_parts = []
+            if menu["materials"]:
+                description_parts.append("【材料】\\n" + menu["materials"])
+            if menu["recipe"]:
+                description_parts.append("【レシピ】\\n" + menu["recipe"])
+
+            description = "\\n\\n".join(description_parts)
 
             f.write("BEGIN:VEVENT\n")
             f.write(f"UID:{year}{month:02d}{i}@menu\n")
@@ -140,18 +183,14 @@ def create_ics(sequence, year, month):
     return filename
 
 # ===============================
-# メイン
+# main
 # ===============================
 
 def main():
     year, month = get_next_month()
-
-    menus = get_menu_list_from_notion()
-
+    menus = get_menu_list()
     sequence = generate_menu(menus, year, month)
-
     filename = create_ics(sequence, year, month)
-
     print(f"{filename} を生成しました")
 
 if __name__ == "__main__":
