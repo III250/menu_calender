@@ -4,8 +4,18 @@ import calendar
 import requests
 from datetime import datetime, timedelta, date
 
+# ===============================
+# Notion設定
+# ===============================
+
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+
+if not NOTION_TOKEN:
+    raise ValueError("NOTION_TOKEN が設定されていません")
+
+if not NOTION_DATABASE_ID:
+    raise ValueError("NOTION_DATABASE_ID が設定されていません")
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -26,7 +36,8 @@ def get_next_month():
     return year, month
 
 # ===============================
-# Notion取得（魚=名前に「魚」）
+# Notionから取得
+# 魚判定 = 名前に「魚」
 # ===============================
 def get_menu_list():
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
@@ -72,7 +83,10 @@ def get_menu_list():
     return menus
 
 # ===============================
-# 月間生成（完全保証版）
+# 月間生成
+# 水曜(2)・金曜(4)は魚固定
+# 連続禁止
+# 一巡方式
 # ===============================
 def generate_menu(menus, year, month):
     days_in_month = calendar.monthrange(year, month)[1]
@@ -81,8 +95,8 @@ def generate_menu(menus, year, month):
     fish_master = [m for m in menus if m["is_fish"]]
     other_master = [m for m in menus if not m["is_fish"]]
 
-    if len(fish_master) < 2:
-        raise ValueError("魚メニューが2つ以上必要です")
+    if len(fish_master) < 1:
+        raise ValueError("魚メニューが必要です")
 
     fish_pool = fish_master.copy()
     other_pool = other_master.copy()
@@ -90,68 +104,47 @@ def generate_menu(menus, year, month):
     random.shuffle(other_pool)
 
     result = []
-    current_day = 0
+    last_name = None
 
-    while current_day < days_in_month:
-        current_date = start_date + timedelta(days=current_day)
-        weekday = current_date.weekday()
+    for i in range(days_in_month):
+        current_date = start_date + timedelta(days=i)
+        weekday = current_date.weekday()  # 月0〜日6
 
-        # 月曜なら1週間まとめて作る
-        if weekday == 0 and current_day + 4 < days_in_month:
+        # 水曜(2)・金曜(4)は魚
+        if weekday in [2, 4]:
 
-            # 平日5日分作る
-            week_block = []
-
-            # 魚2つ取得
-            if len(fish_pool) < 2:
+            if not fish_pool:
                 fish_pool = fish_master.copy()
                 random.shuffle(fish_pool)
 
-            fish_two = [fish_pool.pop(), fish_pool.pop()]
-
-            # 非魚3つ取得
-            if len(other_pool) < 3:
-                other_pool = other_master.copy()
-                random.shuffle(other_pool)
-
-            other_three = [other_pool.pop() for _ in range(3)]
-
-            # 位置決め（連続禁止パターンのみ）
-            valid_patterns = [
-                [1,0,1,0,0],
-                [1,0,0,1,0],
-                [1,0,0,0,1],
-                [0,1,0,1,0],
-                [0,1,0,0,1],
-                [0,0,1,0,1],
-            ]
-
-            pattern = random.choice(valid_patterns)
-
-            fish_idx = 0
-            other_idx = 0
-
-            for flag in pattern:
-                if flag == 1:
-                    week_block.append(fish_two[fish_idx])
-                    fish_idx += 1
-                else:
-                    week_block.append(other_three[other_idx])
-                    other_idx += 1
-
-            result.extend(week_block)
-            current_day += 5
+            # 連続禁止
+            for idx, m in enumerate(fish_pool):
+                if m["name"] != last_name:
+                    pick = fish_pool.pop(idx)
+                    break
+            else:
+                fish_pool = fish_master.copy()
+                random.shuffle(fish_pool)
+                pick = fish_pool.pop()
 
         else:
-            # 土日や月末端数
             if not other_pool:
                 other_pool = other_master.copy()
                 random.shuffle(other_pool)
 
-            result.append(other_pool.pop())
-            current_day += 1
+            for idx, m in enumerate(other_pool):
+                if m["name"] != last_name:
+                    pick = other_pool.pop(idx)
+                    break
+            else:
+                other_pool = other_master.copy()
+                random.shuffle(other_pool)
+                pick = other_pool.pop()
 
-    return result[:days_in_month]
+        result.append(pick)
+        last_name = pick["name"]
+
+    return result
 
 # ===============================
 # ICS生成
@@ -161,7 +154,8 @@ def create_ics(sequence, year, month):
     start_date = date(year, month, 1)
 
     with open(filename, "w", encoding="utf-8") as f:
-        f.write("BEGIN:VCALENDAR\nVERSION:2.0\n")
+        f.write("BEGIN:VCALENDAR\n")
+        f.write("VERSION:2.0\n")
 
         for i, menu in enumerate(sequence):
             event_date = start_date + timedelta(days=i)
