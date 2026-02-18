@@ -5,11 +5,17 @@ import requests
 from datetime import datetime, timedelta, date
 
 # ===============================
-# Notion設定（環境変数）
+# Notion設定（GitHub Secrets）
 # ===============================
 
-NOTION_TOKEN = os.environ["NOTION_TOKEN"]
-DATABASE_ID = os.environ["DATABASE_ID"]
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+
+if not NOTION_TOKEN:
+    raise ValueError("NOTION_TOKEN が設定されていません")
+
+if not NOTION_DATABASE_ID:
+    raise ValueError("NOTION_DATABASE_ID が設定されていません")
 
 NOTION_HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
@@ -32,10 +38,11 @@ def get_next_month():
 
 # ===============================
 # Notionの献立マスターから取得
+# （タイトルプロパティ名は "名前" 前提）
 # ===============================
 
 def get_menu_list_from_notion():
-    url = f"https://api.notion.com/v1/databases/{DATABASE_ID}/query"
+    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
 
     menus = []
     has_more = True
@@ -58,13 +65,14 @@ def get_menu_list_from_notion():
         has_more = data["has_more"]
         next_cursor = data.get("next_cursor")
 
-    if len(menus) == 0:
+    if not menus:
         raise ValueError("献立マスターが空です")
 
     return menus
 
 # ===============================
 # 一巡方式 + 平日週2魚 + 魚連続禁止
+# （魚判定 = メニュー名に「魚」を含む）
 # ===============================
 
 def generate_menu(menus, year, month):
@@ -85,7 +93,6 @@ def generate_menu(menus, year, month):
         if weekday == 0:
             fish_count = 0
 
-        # 前日が魚かどうか
         prev_is_fish = False
         if result:
             prev_is_fish = "魚" in result[-1]
@@ -112,7 +119,6 @@ def generate_menu(menus, year, month):
             random.shuffle(pool)
             candidate_pool = pool
 
-            # 連続魚回避
             if prev_is_fish:
                 candidate_pool = [m for m in candidate_pool if "魚" not in m]
 
