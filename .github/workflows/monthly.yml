@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     permissions:
-      contents: write   # ← これが超重要！
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -29,8 +29,9 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python generate_menu.py
 
-      - name: Commit ICS & post to Notion
+      - name: Commit & Upload to Notion
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
         run: python upload_ics_to_notion.py
+
