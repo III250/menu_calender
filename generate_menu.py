@@ -17,7 +17,7 @@ if not NOTION_TOKEN:
 if not NOTION_DATABASE_ID:
     raise ValueError("NOTION_DATABASE_ID が設定されていません")
 
-NOTION_HEADERS = {
+HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Notion-Version": "2022-06-28",
     "Content-Type": "application/json"
@@ -26,6 +26,7 @@ NOTION_HEADERS = {
 # ===============================
 # 次月取得
 # ===============================
+
 def get_next_month():
     today = datetime.today()
     year = today.year
@@ -36,9 +37,9 @@ def get_next_month():
     return year, month
 
 # ===============================
-# Notionから取得
-# 魚判定 = 名前に「魚」
+# Notionからメニュー取得
 # ===============================
+
 def get_menu_list():
     url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
     menus = []
@@ -50,7 +51,7 @@ def get_menu_list():
         if next_cursor:
             payload["start_cursor"] = next_cursor
 
-        res = requests.post(url, headers=NOTION_HEADERS, json=payload)
+        res = requests.post(url, headers=HEADERS, json=payload)
         res.raise_for_status()
         data = res.json()
 
@@ -62,19 +63,13 @@ def get_menu_list():
 
             name = props["名前"]["title"][0]["plain_text"]
 
-            materials = ""
-            if props["材料"]["rich_text"]:
-                materials = props["材料"]["rich_text"][0]["plain_text"]
-
-            recipe = ""
-            if props["レシピ"]["rich_text"]:
-                recipe = props["レシピ"]["rich_text"][0]["plain_text"]
+            categories = []
+            if props["分類"]["multi_select"]:
+                categories = [c["name"] for c in props["分類"]["multi_select"]]
 
             menus.append({
                 "name": name,
-                "materials": materials,
-                "recipe": recipe,
-                "is_fish": "魚" in name
+                "categories": categories
             })
 
         has_more = data["has_more"]
@@ -83,72 +78,78 @@ def get_menu_list():
     return menus
 
 # ===============================
-# 月間生成
-# 水曜(2)・金曜(4)は魚固定
-# 連続禁止
-# 一巡方式
+# 月間生成ロジック
 # ===============================
+
 def generate_menu(menus, year, month):
     days_in_month = calendar.monthrange(year, month)[1]
     start_date = date(year, month, 1)
 
-    fish_master = [m for m in menus if m["is_fish"]]
-    other_master = [m for m in menus if not m["is_fish"]]
+    # 曜日→カテゴリ
+    weekday_category = {
+        0: "炊飯器",      # 月
+        1: "フライパン",  # 火
+        2: "魚",          # 水
+        3: "フライパン",  # 木
+        4: "炊飯器",      # 金
+        5: "パパ",        # 土
+        6: "フライパン"   # 日
+    }
 
-    if len(fish_master) < 1:
-        raise ValueError("魚メニューが必要です")
+    # カテゴリごとのマスター
+    category_master = {}
+    for m in menus:
+        for cat in m["categories"]:
+            category_master.setdefault(cat, []).append(m)
 
-    fish_pool = fish_master.copy()
-    other_pool = other_master.copy()
-    random.shuffle(fish_pool)
-    random.shuffle(other_pool)
+    # pool作成
+    category_pool = {}
+    for cat, items in category_master.items():
+        shuffled = items.copy()
+        random.shuffle(shuffled)
+        category_pool[cat] = shuffled
 
     result = []
-    last_name = None
 
     for i in range(days_in_month):
         current_date = start_date + timedelta(days=i)
-        weekday = current_date.weekday()  # 月0〜日6
+        weekday = current_date.weekday()
+        category = weekday_category[weekday]
 
-        # 水曜(2)・金曜(4)は魚
-        if weekday in [2, 4]:
+        if category not in category_master:
+            raise ValueError(f"{category} のメニューがありません")
 
-            if not fish_pool:
-                fish_pool = fish_master.copy()
-                random.shuffle(fish_pool)
+        # 一巡したらリセット
+        if not category_pool[category]:
+            category_pool[category] = category_master[category].copy()
+            random.shuffle(category_pool[category])
 
-            # 連続禁止
-            for idx, m in enumerate(fish_pool):
-                if m["name"] != last_name:
-                    pick = fish_pool.pop(idx)
-                    break
-            else:
-                fish_pool = fish_master.copy()
-                random.shuffle(fish_pool)
-                pick = fish_pool.pop()
+        # 翌週同曜日禁止
+        last_week_name = None
+        if i >= 7:
+            last_week_name = result[i-7]["name"]
 
-        else:
-            if not other_pool:
-                other_pool = other_master.copy()
-                random.shuffle(other_pool)
+        # 候補選択
+        pick = None
+        for idx, candidate in enumerate(category_pool[category]):
+            if candidate["name"] != last_week_name:
+                pick = category_pool[category].pop(idx)
+                break
 
-            for idx, m in enumerate(other_pool):
-                if m["name"] != last_name:
-                    pick = other_pool.pop(idx)
-                    break
-            else:
-                other_pool = other_master.copy()
-                random.shuffle(other_pool)
-                pick = other_pool.pop()
+        # 全部ダメなら再シャッフル
+        if pick is None:
+            category_pool[category] = category_master[category].copy()
+            random.shuffle(category_pool[category])
+            pick = category_pool[category].pop()
 
         result.append(pick)
-        last_name = pick["name"]
 
     return result
 
 # ===============================
 # ICS生成
 # ===============================
+
 def create_ics(sequence, year, month):
     filename = f"menu-{year}-{month:02d}.ics"
     start_date = date(year, month, 1)
@@ -161,19 +162,10 @@ def create_ics(sequence, year, month):
             event_date = start_date + timedelta(days=i)
             date_str = event_date.strftime("%Y%m%d")
 
-            desc_parts = []
-            if menu["materials"]:
-                desc_parts.append("【材料】\\n" + menu["materials"])
-            if menu["recipe"]:
-                desc_parts.append("【レシピ】\\n" + menu["recipe"])
-
-            description = "\\n\\n".join(desc_parts)
-
             f.write("BEGIN:VEVENT\n")
             f.write(f"UID:{year}{month:02d}{i}@menu\n")
             f.write(f"DTSTART;VALUE=DATE:{date_str}\n")
             f.write(f"SUMMARY:{menu['name']}\n")
-            f.write(f"DESCRIPTION:{description}\n")
             f.write("END:VEVENT\n")
 
         f.write("END:VCALENDAR\n")
@@ -183,6 +175,7 @@ def create_ics(sequence, year, month):
 # ===============================
 # main
 # ===============================
+
 def main():
     year, month = get_next_month()
     menus = get_menu_list()
