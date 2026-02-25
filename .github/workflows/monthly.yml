@@ -1,14 +1,11 @@
 name: Monthly Menu Calendar
 
 on:
-
   schedule:
     - cron: '0 0 1 * *'
-
   workflow_dispatch:
 
 jobs:
-
   build:
 
     runs-on: ubuntu-latest
@@ -24,14 +21,11 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install
-        run: pip install requests
+      - run: pip install -r requirements.txt
 
-      - name: Generate
+      - run: python generate_menu.py
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-        run: python generate_menu.py
 
-      - name: Commit ICS and index
-        run: python upload_ics_to_notion.py
+      - run: python upload_ics_to_notion.py
