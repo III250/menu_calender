@@ -1,37 +1,37 @@
 name: Monthly Menu Calendar
 
 on:
+
   schedule:
     - cron: '0 0 1 * *'
+
   workflow_dispatch:
 
 jobs:
+
   build:
+
     runs-on: ubuntu-latest
 
     permissions:
       contents: write
 
     steps:
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          pip install requests
+      - name: Install
+        run: pip install requests
 
-      - name: Generate menu ICS
+      - name: Generate
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
         run: python generate_menu.py
 
-      - name: Commit & Upload to Notion
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
+      - name: Commit ICS and index
         run: python upload_ics_to_notion.py
