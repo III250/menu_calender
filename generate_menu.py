@@ -11,6 +11,12 @@ from datetime import datetime, timedelta, date
 NOTION_TOKEN = os.getenv("NOTION_TOKEN")
 NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
 
+if not NOTION_TOKEN:
+    raise ValueError("NOTION_TOKEN が設定されていません")
+
+if not NOTION_DATABASE_ID:
+    raise ValueError("NOTION_DATABASE_ID が設定されていません")
+
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Notion-Version": "2022-06-28",
@@ -18,6 +24,23 @@ HEADERS = {
 }
 
 STATE_FILE = "menu_state.json"
+
+# ===============================
+# 状態保存
+# ===============================
+
+def load_state():
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return {
+        "order": {},
+        "last_week": []
+    }
+
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
 
 # ===============================
 # 次月取得
@@ -31,23 +54,6 @@ def get_next_month():
         month = 1
         year += 1
     return year, month
-
-
-# ===============================
-# 状態ファイル読み書き
-# ===============================
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, encoding="utf-8") as f:
-            return json.load(f)
-    return {"index": {}, "last_week": []}
-
-
-def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, ensure_ascii=False, indent=2)
-
 
 # ===============================
 # Notionからメニュー取得
@@ -77,25 +83,22 @@ def get_menu_list():
 
             props = item["properties"]
 
-            # 名前
             if not props["名前"]["title"]:
                 continue
 
             name = props["名前"]["title"][0]["plain_text"]
 
-            # 分類
             categories = []
-            if "分類" in props and props["分類"]["type"] == "multi_select":
+
+            if "分類" in props and props["分類"]["multi_select"]:
                 categories = [c["name"] for c in props["分類"]["multi_select"]]
 
-            # 材料
             materials = ""
             if "材料" in props and props["材料"]["rich_text"]:
                 materials = "".join(
                     t["plain_text"] for t in props["材料"]["rich_text"]
                 )
 
-            # レシピ
             recipe = ""
             if "レシピ" in props and props["レシピ"]["rich_text"]:
                 recipe = "".join(
@@ -124,27 +127,25 @@ def escape_ics(text):
     if not text:
         return ""
 
-    return (
-        text.replace("\\", "\\\\")
-            .replace(",", "\\,")
-            .replace(";", "\\;")
-            .replace("\n", "\\n")
-    )
+    text = text.replace("\\", "\\\\")
+    text = text.replace(",", "\\,")
+    text = text.replace(";", "\\;")
+    text = text.replace("\n", "\\n")
+
+    return text
 
 
 # ===============================
-# メニュー生成（順番＋重複禁止＋index保存）
+# メニュー生成（完全順番・キュー方式）
 # ===============================
 
 def generate_menu(menus, year, month):
 
     state = load_state()
 
-    index_state = state.get("index", {})
     last_week = state.get("last_week", [])
 
     days = calendar.monthrange(year, month)[1]
-
     start_date = date(year, month, 1)
 
     weekday_category = {
@@ -157,62 +158,83 @@ def generate_menu(menus, year, month):
         6: "フライパン"
     }
 
-    # カテゴリ別リスト作成
-    category_master = {}
+    # カテゴリ別キュー
+    category_queue = {}
 
     for m in menus:
         for cat in m["categories"]:
-            category_master.setdefault(cat, []).append(m)
+            category_queue.setdefault(cat, []).append(m)
+
+    # 保存された順序復元
+    saved_order = state.get("order", {})
+
+    for cat in category_queue:
+
+        if cat in saved_order:
+
+            saved_names = saved_order[cat]
+
+            lookup = {m["name"]: m for m in category_queue[cat]}
+
+            new_queue = []
+
+            for name in saved_names:
+                if name in lookup:
+                    new_queue.append(lookup[name])
+
+            for m in category_queue[cat]:
+                if m["name"] not in saved_names:
+                    new_queue.append(m)
+
+            category_queue[cat] = new_queue
+
 
     result = []
 
     for i in range(days):
 
         d = start_date + timedelta(days=i)
-        category = weekday_category[d.weekday()]
+        cat = weekday_category[d.weekday()]
 
-        if category not in category_master:
-            raise ValueError(f"{category} が存在しません")
+        if cat not in category_queue:
+            raise ValueError(f"{cat} のメニューがありません")
 
-        items = category_master[category]
+        queue = category_queue[cat]
 
-        index = index_state.get(category, 0)
-
-        # 重複回避付きで選択
         attempts = 0
 
-        while True:
+        # 重複回避
+        while attempts < len(queue):
 
-            menu = items[index]
-
+            menu = queue[0]
             name = menu["name"]
 
             duplicate = False
 
-            # 先週禁止
             if i >= 7 and result[i-7]["name"] == name:
                 duplicate = True
 
-            # 前月最終週禁止
             if name in last_week:
                 duplicate = True
 
             if not duplicate:
                 break
 
-            index = (index + 1) % len(items)
+            queue.append(queue.pop(0))
             attempts += 1
 
-            if attempts > len(items):
-                break
+        menu = queue.pop(0)
+        queue.append(menu)
 
         result.append(menu)
 
-        index = (index + 1) % len(items)
-        index_state[category] = index
 
-    # 次回用に最後の7日保存
-    state["index"] = index_state
+    # 状態保存
+    state["order"] = {
+        cat: [m["name"] for m in queue]
+        for cat, queue in category_queue.items()
+    }
+
     state["last_week"] = [m["name"] for m in result[-7:]]
 
     save_state(state)
@@ -221,7 +243,7 @@ def generate_menu(menus, year, month):
 
 
 # ===============================
-# ICS生成（終日）
+# ICS生成（終日予定）
 # ===============================
 
 def create_ics(sequence, year, month):
@@ -238,24 +260,25 @@ def create_ics(sequence, year, month):
 
         for i, menu in enumerate(sequence):
 
-            d = start_date + timedelta(days=i)
-            date_str = d.strftime("%Y%m%d")
+            event_date = start_date + timedelta(days=i)
+            date_str = event_date.strftime("%Y%m%d")
 
-            description = ""
+            description_parts = []
 
             if menu["materials"]:
-                description += "【材料】\\n" + menu["materials"] + "\\n\\n"
+                description_parts.append("【材料】\\n" + menu["materials"])
 
             if menu["recipe"]:
-                description += "【レシピ】\\n" + menu["recipe"]
+                description_parts.append("【レシピ】\\n" + menu["recipe"])
+
+            description = "\\n\\n".join(description_parts)
 
             f.write("BEGIN:VEVENT\n")
 
             f.write(f"UID:{year}{month:02d}{i}@menu\n")
 
-            # 終日予定（重要）
+            # 終日予定
             f.write(f"DTSTART;VALUE=DATE:{date_str}\n")
-            f.write(f"DTEND;VALUE=DATE:{date_str}\n")
 
             f.write(f"SUMMARY:{escape_ics(menu['name'])}\n")
 
@@ -281,9 +304,9 @@ def main():
 
     sequence = generate_menu(menus, year, month)
 
-    create_ics(sequence, year, month)
+    filename = create_ics(sequence, year, month)
 
-    print("献立生成完了")
+    print(f"{filename} を生成しました")
 
 
 if __name__ == "__main__":
