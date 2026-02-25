@@ -1,32 +1,43 @@
 import os
 import json
 import calendar
-import datetime
+import requests
+from datetime import datetime, timedelta, date
 from ics import Calendar, Event
-from notion_client import Client
-
-NOTION_TOKEN = os.environ["NOTION_TOKEN"]
-DATABASE_ID = os.environ["DATABASE_ID"]
 
 STATE_FILE = "menu_state.json"
 
-notion = Client(auth=NOTION_TOKEN)
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+NOTION_DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
+
+HEADERS = {
+    "Authorization": f"Bearer {NOTION_TOKEN}",
+    "Notion-Version": "2022-06-28",
+    "Content-Type": "application/json"
+}
 
 
-# =========================
-# state読み込み
-# =========================
+# ===============================
+# 次月取得
+# ===============================
+def get_next_month():
+    today = datetime.today()
+    year = today.year
+    month = today.month + 1
+    if month == 13:
+        month = 1
+        year += 1
+    return year, month
 
+
+# ===============================
+# state load/save
+# ===============================
 def load_state():
     if os.path.exists(STATE_FILE):
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-
-    return {
-        "category_index": {},
-        "last_week_menus": [],
-        "last_month_last_week": []
-    }
+    return {"category_index": {}, "last_week": []}
 
 
 def save_state(state):
@@ -34,170 +45,189 @@ def save_state(state):
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
-# =========================
-# Notionから献立取得
-# =========================
-
+# ===============================
+# Notion取得
+# ===============================
 def get_menu_list():
 
-    results = notion.databases.query(
-        database_id=DATABASE_ID,
-        page_size=100
-    )
+    url = f"https://api.notion.com/v1/databases/{NOTION_DATABASE_ID}/query"
 
-    menus = {}
+    menus = []
+    has_more = True
+    cursor = None
 
-    for page in results["results"]:
+    while has_more:
 
-        props = page["properties"]
+        payload = {}
+        if cursor:
+            payload["start_cursor"] = cursor
 
-        title = props["名前"]["title"][0]["plain_text"]
+        res = requests.post(url, headers=HEADERS, json=payload)
+        res.raise_for_status()
+        data = res.json()
 
-        category = None
-        if "分類" in props and props["分類"]["type"] == "multi_select":
-            if props["分類"]["multi_select"]:
-                category = props["分類"]["multi_select"][0]["name"]
+        for item in data["results"]:
 
-        ingredients = ""
-        if "材料" in props and props["材料"]["type"] == "rich_text":
+            props = item["properties"]
+
+            if not props["名前"]["title"]:
+                continue
+
+            name = props["名前"]["title"][0]["plain_text"]
+
+            categories = [
+                c["name"] for c in props["分類"]["multi_select"]
+            ]
+
+            materials = ""
             if props["材料"]["rich_text"]:
-                ingredients = props["材料"]["rich_text"][0]["plain_text"]
+                materials = "".join(
+                    t["plain_text"] for t in props["材料"]["rich_text"]
+                )
 
-        recipe = ""
-        if "レシピ" in props and props["レシピ"]["type"] == "rich_text":
+            recipe = ""
             if props["レシピ"]["rich_text"]:
-                recipe = props["レシピ"]["rich_text"][0]["plain_text"]
+                recipe = "".join(
+                    t["plain_text"] for t in props["レシピ"]["rich_text"]
+                )
 
-        if category not in menus:
-            menus[category] = []
+            menus.append({
+                "name": name,
+                "categories": categories,
+                "materials": materials,
+                "recipe": recipe
+            })
 
-        menus[category].append({
-            "title": title,
-            "ingredients": ingredients,
-            "recipe": recipe
-        })
+        has_more = data["has_more"]
+        cursor = data["next_cursor"]
 
     return menus
 
 
-# =========================
-# カテゴリ順で取得（重複回避付き）
-# =========================
+# ===============================
+# エスケープ
+# ===============================
+def escape(text):
 
-def get_next_menu(category, menus, state, forbidden):
+    if not text:
+        return ""
 
-    if category not in state["category_index"]:
-        state["category_index"][category] = 0
-
-    menu_list = menus[category]
-
-    start = state["category_index"][category]
-
-    for i in range(len(menu_list)):
-
-        idx = (start + i) % len(menu_list)
-
-        menu = menu_list[idx]["title"]
-
-        if menu not in forbidden:
-
-            state["category_index"][category] = (idx + 1) % len(menu_list)
-
-            return menu_list[idx]
-
-    raise Exception(f"{category}で重複しない献立が不足しています")
+    return text.replace("\\", "\\\\").replace("\n", "\\n")
 
 
-# =========================
-# カレンダー生成
-# =========================
-
-def generate_calendar(year, month, menus):
+# ===============================
+# 献立生成（順番循環・重複禁止）
+# ===============================
+def generate_menu(menus, year, month):
 
     state = load_state()
 
-    cal = Calendar()
+    weekday_category = {
+        0: "炊飯器",
+        1: "フライパン",
+        2: "魚",
+        3: "フライパン",
+        4: "炊飯器",
+        5: "パパ",
+        6: "フライパン"
+    }
 
-    categories = list(menus.keys())
+    category_master = {}
 
-    last_week = []
-    this_month_all = []
+    for m in menus:
+        for c in m["categories"]:
+            category_master.setdefault(c, []).append(m)
 
-    cal_data = calendar.Calendar()
+    category_index = state.get("category_index", {})
+    prev_last_week = state.get("last_week", [])
 
-    weeks = cal_data.monthdatescalendar(year, month)
+    result = []
 
-    for week_index, week in enumerate(weeks):
+    for i in range(calendar.monthrange(year, month)[1]):
 
-        for day in week:
+        d = date(year, month, 1) + timedelta(days=i)
+        category = weekday_category[d.weekday()]
 
-            if day.month != month:
-                continue
+        items = category_master[category]
 
-            category = categories[day.weekday() % len(categories)]
+        idx = category_index.get(category, 0)
 
-            forbidden = set(state["last_week_menus"])
-            forbidden.update(state["last_month_last_week"])
+        for _ in range(len(items)):
 
-            menu = get_next_menu(
-                category,
-                menus,
-                state,
-                forbidden
+            candidate = items[idx]
+
+            last_week_duplicate = (
+                i >= 7 and candidate["name"] == result[i-7]["name"]
             )
 
-            title = menu["title"]
+            prev_month_duplicate = candidate["name"] in prev_last_week
 
-            description = f"""材料:
-{menu['ingredients']}
+            if not last_week_duplicate and not prev_month_duplicate:
+                break
 
-レシピ:
-{menu['recipe']}
-"""
+            idx = (idx + 1) % len(items)
 
-            event = Event()
+        result.append(candidate)
 
-            event.name = title
-            event.begin = day.isoformat()
-            event.make_all_day()
+        category_index[category] = (idx + 1) % len(items)
 
-            event.description = description
-
-            cal.events.add(event)
-
-            last_week.append(title)
-            this_month_all.append(title)
-
-    # 最終週保存
-    state["last_week_menus"] = last_week[-7:]
-    state["last_month_last_week"] = last_week[-7:]
+    state["category_index"] = category_index
+    state["last_week"] = [m["name"] for m in result[-7:]]
 
     save_state(state)
 
-    return cal
+    return result
 
 
-# =========================
-# main
-# =========================
+# ===============================
+# ICS生成
+# ===============================
+def create_ics(sequence, year, month):
 
-def main():
+    cal = Calendar()
 
-    today = datetime.date.today()
+    for i, menu in enumerate(sequence):
 
-    year = today.year
-    month = today.month
+        d = date(year, month, 1) + timedelta(days=i)
 
-    menus = get_menu_list()
+        e = Event()
+        e.name = menu["name"]
+        e.begin = d
 
-    cal = generate_calendar(year, month, menus)
+        desc = ""
+
+        if menu["materials"]:
+            desc += "【材料】\n" + menu["materials"] + "\n\n"
+
+        if menu["recipe"]:
+            desc += "【レシピ】\n" + menu["recipe"]
+
+        e.description = desc
+
+        cal.events.add(e)
 
     filename = f"menu-{year}-{month:02d}.ics"
 
     with open(filename, "w", encoding="utf-8") as f:
         f.writelines(cal)
 
-    print("generated:", filename)
+    return filename
+
+
+# ===============================
+# main
+# ===============================
+def main():
+
+    year, month = get_next_month()
+
+    menus = get_menu_list()
+
+    sequence = generate_menu(menus, year, month)
+
+    filename = create_ics(sequence, year, month)
+
+    print("生成:", filename)
 
 
 if __name__ == "__main__":
