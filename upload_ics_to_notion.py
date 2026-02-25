@@ -45,6 +45,7 @@ def post_to_notion(filename):
     raw_url = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/{filename}"
 
     url = f"https://api.notion.com/v1/blocks/{PAGE_ID}/children"
+
     payload = {
         "children": [
             {
@@ -82,7 +83,7 @@ def main():
     commit_ics(filename)
     clear_notion_page()
     post_to_notion(filename)
-    print(f"{filename} uploaded and page refreshed")
+    print("ICSアップロード完了")
 
 if __name__ == "__main__":
     main()
