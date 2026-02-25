@@ -1,36 +1,32 @@
 import subprocess
-import datetime
+import glob
 
 
-def commit_and_push(filename):
+def commit():
 
-    subprocess.run(["git", "config", "--global", "user.name", "github-actions"], check=True)
-    subprocess.run(["git", "config", "--global", "user.email", "actions@github.com"], check=True)
+    subprocess.run(["git", "config", "user.name", "github-actions"])
+    subprocess.run(["git", "config", "user.email", "actions@github.com"])
 
-    subprocess.run(["git", "add", filename], check=True)
-    subprocess.run(["git", "add", "menu_state.json"], check=True)
+    subprocess.run(["git", "add", "."])
 
-    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
-
-    if result.stdout.strip() == "":
-        print("No changes")
-        return
-
-    subprocess.run(
-        ["git", "commit", "-m", f"Update {filename}"],
-        check=True
+    result = subprocess.run(
+        ["git", "commit", "-m", "update menu"],
+        capture_output=True,
+        text=True
     )
 
-    subprocess.run(["git", "push"], check=True)
+    if "nothing to commit" in result.stdout:
+        print("commitなし")
+        return
+
+    subprocess.run(["git", "push"])
 
 
 def main():
 
-    today = datetime.date.today()
+    commit()
 
-    filename = f"menu-{today.year}-{today.month:02d}.ics"
-
-    commit_and_push(filename)
+    print("upload complete")
 
 
 if __name__ == "__main__":
