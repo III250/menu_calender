@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install requests ics
+          pip install requests
 
       - name: Generate menu ICS
         env:
@@ -33,5 +33,5 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: python upload_ics_to_notion.py
-
