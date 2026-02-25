@@ -160,7 +160,21 @@ def generate_menu(menus, year, month):
 
     # 前回の状態を読み込み、存在するカテゴリにはそれを利用
     prev_state = load_state()
-    category_indices = {cat: prev_state.get(cat, 0) for cat in category_master}
+    category_indices = {}
+    for cat, items in category_master.items():
+        if cat in prev_state:
+            # インデックスが範囲外なら長さで折り返す
+            try:
+                idx = int(prev_state[cat])
+            except Exception:
+                idx = 0
+            if items:
+                idx = idx % len(items)
+            else:
+                idx = 0
+        else:
+            idx = 0
+        category_indices[cat] = idx
 
     result = []
 
