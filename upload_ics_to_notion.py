@@ -1,17 +1,24 @@
 import subprocess
-import glob
+import datetime
 
-def commit_all():
 
-    subprocess.run(["git", "config", "user.name", "github-actions"], check=True)
+def commit_and_push(filename):
 
-    subprocess.run(["git", "config", "user.email", "actions@github.com"], check=True)
+    subprocess.run(["git", "config", "--global", "user.name", "github-actions"], check=True)
+    subprocess.run(["git", "config", "--global", "user.email", "actions@github.com"], check=True)
 
-    subprocess.run(["git", "add", "."], check=True)
+    subprocess.run(["git", "add", filename], check=True)
+    subprocess.run(["git", "add", "menu_state.json"], check=True)
+
+    result = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+
+    if result.stdout.strip() == "":
+        print("No changes")
+        return
 
     subprocess.run(
-        ["git", "commit", "-m", "update menu and index"],
-        check=False
+        ["git", "commit", "-m", f"Update {filename}"],
+        check=True
     )
 
     subprocess.run(["git", "push"], check=True)
@@ -19,9 +26,11 @@ def commit_all():
 
 def main():
 
-    commit_all()
+    today = datetime.date.today()
 
-    print("commit完了")
+    filename = f"menu-{today.year}-{today.month:02d}.ics"
+
+    commit_and_push(filename)
 
 
 if __name__ == "__main__":
