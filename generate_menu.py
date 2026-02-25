@@ -1,6 +1,6 @@
 import os
-import random
 import calendar
+import json
 import requests
 from datetime import datetime, timedelta, date
 
@@ -111,7 +111,34 @@ def escape_ics(text):
 # 月間生成ロジック
 # ===============================
 
+STATE_FILE = "menu_state.json"
+
+
+def load_state():
+    """前回生成時のカテゴリインデックスを読み込む。"""
+    if not os.path.exists(STATE_FILE):
+        return {}
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_state(state):
+    """現在のカテゴリインデックスを保存する。"""
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, ensure_ascii=False, indent=2)
+
+
 def generate_menu(menus, year, month):
+    """カテゴリごとにリストの先頭から順に採用し、末尾まで到達したら先頭に戻る。
+
+    各カテゴリについて前月の最後に使った位置を保持し、
+    次月はその次から始める。
+    同じ曜日が先週と同じメニューにならないようにする簡単なチェックも行う。
+    ランダム要素はすべて排除し、渡された順序がそのまま繰り返される。
+    """
     days_in_month = calendar.monthrange(year, month)[1]
     start_date = date(year, month, 1)
 
@@ -125,16 +152,15 @@ def generate_menu(menus, year, month):
         6: "フライパン"
     }
 
+    # カテゴリごとにメニューを分類（順序はそのまま保持）
     category_master = {}
     for m in menus:
         for cat in m["categories"]:
             category_master.setdefault(cat, []).append(m)
 
-    category_pool = {}
-    for cat, items in category_master.items():
-        shuffled = items.copy()
-        random.shuffle(shuffled)
-        category_pool[cat] = shuffled
+    # 前回の状態を読み込み、存在するカテゴリにはそれを利用
+    prev_state = load_state()
+    category_indices = {cat: prev_state.get(cat, 0) for cat in category_master}
 
     result = []
 
@@ -146,25 +172,27 @@ def generate_menu(menus, year, month):
         if category not in category_master:
             raise ValueError(f"{category} のメニューがありません")
 
-        if not category_pool[category]:
-            category_pool[category] = category_master[category].copy()
-            random.shuffle(category_pool[category])
+        candidates = category_master[category]
+        idx = category_indices.get(category, 0)
 
-        last_week_name = result[i-7]["name"] if i >= 7 else None
+        # 可能であれば先週と同じメニューを避ける
+        last_week_name = result[i - 7]["name"] if i >= 7 else None
 
-        pick = None
-        for idx, candidate in enumerate(category_pool[category]):
-            if candidate["name"] != last_week_name:
-                pick = category_pool[category].pop(idx)
-                break
-
-        if pick is None:
-            category_pool[category] = category_master[category].copy()
-            random.shuffle(category_pool[category])
-            pick = category_pool[category].pop()
+        pick = candidates[idx]
+        if last_week_name and pick["name"] == last_week_name and len(candidates) > 1:
+            orig_idx = idx
+            while pick["name"] == last_week_name:
+                idx = (idx + 1) % len(candidates)
+                pick = candidates[idx]
+                if idx == orig_idx:
+                    break
+        category_indices[category] = (idx + 1) % len(candidates)
 
         result.append(pick)
 
+    # 次月の開始位置として保存しておく
+    # 既存状態に今回使ったカテゴリを更新し、不要なカテゴリは保持しない
+    save_state(category_indices)
     return result
 
 # ===============================
