@@ -1,2 +1,3 @@
-requests
+notion-client
 ics
+requests
