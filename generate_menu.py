@@ -1,212 +1,260 @@
 import os
 import json
-from datetime import date, timedelta
-from collections import defaultdict
+import calendar
+from datetime import datetime, timedelta, date
 from notion_client import Client
-from ics import Calendar, Event
+
+# ===============================
+# 環境変数
+# ===============================
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
 DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 
+# ===============================
+# Notion client
+# ===============================
+
+notion = Client(auth=NOTION_TOKEN)
+
 STATE_FILE = "menu_state.json"
-OUTPUT_FILE = "menu_calendar.ics"
 
-START_DATE = date(2026, 1, 1)
-END_DATE = date(2026, 12, 31)
+# ===============================
+# 次月取得
+# ===============================
 
-weekday_category = {
-    0: "炊飯器",
-    1: "フライパン",
-    2: "魚",
-    3: "フライパン",
-    4: "炊飯器",
-    5: "パパ",
-    6: "フライパン"
-}
+def get_next_month():
+    today = datetime.today()
+    year = today.year
+    month = today.month + 1
+    if month == 13:
+        month = 1
+        year += 1
+    return year, month
 
 
-# =====================
-# state load/save
-# =====================
+# ===============================
+# state 読み込み
+# ===============================
 
 def load_state():
-
-    if not os.path.exists(STATE_FILE):
-        return {}
-
-    with open(STATE_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    if os.path.exists(STATE_FILE):
+        with open(STATE_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    return {}
 
 
 def save_state(state):
-
     with open(STATE_FILE, "w", encoding="utf-8") as f:
         json.dump(state, f, ensure_ascii=False, indent=2)
 
 
-# =====================
-# Notion load
-# =====================
-
-def get_text(prop):
-
-    if "rich_text" in prop and prop["rich_text"]:
-        return prop["rich_text"][0]["plain_text"]
-
-    return ""
-
-
-def get_title(prop):
-
-    if prop["title"]:
-        return prop["title"][0]["plain_text"]
-
-    return ""
-
+# ===============================
+# Notionからメニュー取得（完全対応版）
+# ===============================
 
 def load_menu():
 
-    notion = Client(auth=NOTION_TOKEN)
-
-    results = []
-    cursor = None
+    menus = []
+    start_cursor = None
 
     while True:
 
-        res = notion.databases.query(
-            database_id=DATABASE_ID,
-            start_cursor=cursor
-        )
+        if start_cursor:
+            response = notion.databases.query(
+                database_id=DATABASE_ID,
+                start_cursor=start_cursor
+            )
+        else:
+            response = notion.databases.query(
+                database_id=DATABASE_ID
+            )
 
-        results.extend(res["results"])
+        for page in response["results"]:
 
-        if not res["has_more"]:
+            props = page["properties"]
+
+            # 名前
+            title = props["名前"]["title"]
+            if not title:
+                continue
+
+            name = title[0]["plain_text"]
+
+            # 分類
+            categories = []
+            if props["分類"]["multi_select"]:
+                categories = [
+                    c["name"] for c in props["分類"]["multi_select"]
+                ]
+
+            # 材料
+            materials = ""
+            if "材料" in props and props["材料"]["rich_text"]:
+                materials = "".join(
+                    t["plain_text"] for t in props["材料"]["rich_text"]
+                )
+
+            # レシピ
+            recipe = ""
+            if "レシピ" in props and props["レシピ"]["rich_text"]:
+                recipe = "".join(
+                    t["plain_text"] for t in props["レシピ"]["rich_text"]
+                )
+
+            menus.append({
+                "name": name,
+                "categories": categories,
+                "materials": materials,
+                "recipe": recipe
+            })
+
+        if not response["has_more"]:
             break
 
-        cursor = res["next_cursor"]
-
-    menus = defaultdict(list)
-
-    for page in results:
-
-        props = page["properties"]
-
-        name = get_title(props["名前"])
-
-        if not name:
-            continue
-
-        category = props["カテゴリ"]["select"]["name"]
-
-        materials = get_text(props.get("材料", {}))
-        recipe = get_text(props.get("レシピ", {}))
-
-        menus[category].append({
-            "name": name,
-            "materials": materials,
-            "recipe": recipe
-        })
+        start_cursor = response["next_cursor"]
 
     return menus
 
 
-# =====================
-# selector（state対応）
-# =====================
+# ===============================
+# ICS エスケープ
+# ===============================
 
-class Selector:
+def escape(text):
 
-    def __init__(self, menus, state):
+    if not text:
+        return ""
 
-        self.menus = menus
-        self.state = state
-
-        for category in menus:
-
-            if category not in self.state:
-                self.state[category] = 0
-
-
-    def next(self, category):
-
-        index = self.state[category]
-
-        menu = self.menus[category][index]
-
-        self.state[category] = (index + 1) % len(self.menus[category])
-
-        return menu
+    return (
+        text.replace("\\", "\\\\")
+        .replace(",", "\\,")
+        .replace(";", "\\;")
+        .replace("\n", "\\n")
+    )
 
 
-# =====================
-# calendar
-# =====================
+# ===============================
+# 献立生成（カテゴリ順＋index保存）
+# ===============================
 
-def create_calendar(menus, state):
+def generate_menu(menu_list, year, month):
 
-    selector = Selector(menus, state)
+    weekday_category = {
+        0: "炊飯器",
+        1: "フライパン",
+        2: "魚",
+        3: "フライパン",
+        4: "炊飯器",
+        5: "パパ",
+        6: "フライパン"
+    }
 
-    cal = Calendar()
+    # カテゴリごとに分割（Notion順維持）
+    category_map = {}
 
-    current = START_DATE
-
-    while current <= END_DATE:
-
-        category = weekday_category[current.weekday()]
-
-        menu = selector.next(category)
-
-        event = Event()
-
-        event.name = menu["name"]
-
-        event.begin = current
-        event.make_all_day()
-
-        description = ""
-
-        if menu["materials"]:
-            description += "【材料】\n" + menu["materials"] + "\n\n"
-
-        if menu["recipe"]:
-            description += "【レシピ】\n" + menu["recipe"]
-
-        event.description = description
-
-        cal.events.add(event)
-
-        current += timedelta(days=1)
-
-    return cal
-
-
-# =====================
-# save
-# =====================
-
-def save_calendar(cal):
-
-    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-        f.writelines(cal)
-
-
-# =====================
-# main
-# =====================
-
-def main():
-
-    menus = load_menu()
+    for menu in menu_list:
+        for cat in menu["categories"]:
+            category_map.setdefault(cat, []).append(menu)
 
     state = load_state()
 
-    cal = create_calendar(menus, state)
+    days = calendar.monthrange(year, month)[1]
+    start = date(year, month, 1)
 
-    save_calendar(cal)
+    sequence = []
+
+    for i in range(days):
+
+        d = start + timedelta(days=i)
+        cat = weekday_category[d.weekday()]
+
+        if cat not in category_map:
+            raise Exception(f"{cat} が空です")
+
+        idx = state.get(cat, 0)
+
+        menu = category_map[cat][idx]
+
+        sequence.append(menu)
+
+        idx += 1
+        if idx >= len(category_map[cat]):
+            idx = 0
+
+        state[cat] = idx
 
     save_state(state)
 
-    print("完了")
+    return sequence
+
+
+# ===============================
+# ICS生成（終日予定）
+# ===============================
+
+def create_ics(sequence, year, month):
+
+    filename = f"menu-{year}-{month:02d}.ics"
+
+    start = date(year, month, 1)
+
+    with open(filename, "w", encoding="utf-8") as f:
+
+        f.write("BEGIN:VCALENDAR\n")
+        f.write("VERSION:2.0\n")
+        f.write("PRODID:-//Menu//EN\n")
+
+        for i, menu in enumerate(sequence):
+
+            d = start + timedelta(days=i)
+
+            start_str = d.strftime("%Y%m%d")
+            end_str = (d + timedelta(days=1)).strftime("%Y%m%d")
+
+            description = ""
+
+            if menu["materials"]:
+                description += "【材料】\\n" + escape(menu["materials"]) + "\\n\\n"
+
+            if menu["recipe"]:
+                description += "【レシピ】\\n" + escape(menu["recipe"])
+
+            f.write("BEGIN:VEVENT\n")
+
+            f.write(f"UID:{year}{month:02d}{i}@menu\n")
+
+            # 終日イベント
+            f.write(f"DTSTART;VALUE=DATE:{start_str}\n")
+            f.write(f"DTEND;VALUE=DATE:{end_str}\n")
+
+            f.write(f"SUMMARY:{escape(menu['name'])}\n")
+
+            if description:
+                f.write(f"DESCRIPTION:{description}\n")
+
+            f.write("END:VEVENT\n")
+
+        f.write("END:VCALENDAR\n")
+
+    return filename
+
+
+# ===============================
+# main
+# ===============================
+
+def main():
+
+    year, month = get_next_month()
+
+    menus = load_menu()
+
+    sequence = generate_menu(menus, year, month)
+
+    create_ics(sequence, year, month)
+
+    print("生成完了")
 
 
 if __name__ == "__main__":
