@@ -6,7 +6,7 @@ from notion_client import Client
 from ics import Calendar, Event
 
 NOTION_TOKEN = os.environ["NOTION_TOKEN"]
-DATABASE_ID = os.environ["DATABASE_ID"]
+DATABASE_ID = os.environ["NOTION_DATABASE_ID"]
 
 STATE_FILE = "menu_state.json"
 OUTPUT_FILE = "menu_calendar.ics"
