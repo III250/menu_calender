@@ -1,4 +1,4 @@
-```yaml
+
 name: Monthly Menu Calendar
 
 on:
@@ -45,4 +45,5 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 ```
+
 
