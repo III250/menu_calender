@@ -2,6 +2,8 @@
 name: Monthly Menu Calendar
 
 on:
+  schedule:
+    - cron: '0 0 1 * *'
   workflow_dispatch:
 
 jobs:
@@ -24,7 +26,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip uninstall notion-client -y || true
+          pip install -r requirements.txt
 
       - name: Run generator
         run: python generate_menu.py
@@ -32,6 +36,9 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 
-      - name: Commit & Push
+      - name: Upload ICS
         run: python upload_ics_to_notion.py
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 ```
