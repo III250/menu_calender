@@ -1,25 +1,22 @@
-
+```yaml
 name: Monthly Menu Calendar
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: '0 0 1 * *'
-  workflow_dispatch:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
-    # ★ Node.js 24対応（これが今回のポイント）
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     permissions:
       contents: write
 
-    steps:
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+    steps:
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -28,9 +25,9 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies（重要：強制再インストール）
+      - name: Install dependencies
         run: |
-          pip uninstall notion-client -y || true
+          pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Run generator
@@ -39,11 +36,9 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 
-      - name: Upload ICS
+      - name: Commit & Push
         run: python upload_ics_to_notion.py
-        env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
 ```
+
 
 
