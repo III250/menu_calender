@@ -2,7 +2,7 @@
 name: Monthly Menu Calendar
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
   schedule:
     - cron: '0 0 1 * *'
 
@@ -39,6 +39,7 @@ jobs:
       - name: Commit & Push
         run: python upload_ics_to_notion.py
 ```
+
 
 
 
