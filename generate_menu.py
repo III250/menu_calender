@@ -1,4 +1,3 @@
-```python
 import os
 import json
 import calendar
@@ -279,5 +278,5 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
+    
 
