@@ -2,9 +2,7 @@
 name: Monthly Menu Calendar
 
 on:
-  workflow_dispatch: {}
-  schedule:
-    - cron: '0 0 1 * *'
+  workflow_dispatch:
 
 jobs:
   build:
@@ -26,9 +24,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Run generator
         run: python generate_menu.py
