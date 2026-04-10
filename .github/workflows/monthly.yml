@@ -1,3 +1,4 @@
+```yaml
 name: Monthly Menu Calendar
 
 on:
@@ -9,6 +10,10 @@ jobs:
   build:
 
     runs-on: ubuntu-latest
+
+    # ★ Node.js 24対応（これが今回のポイント）
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     permissions:
       contents: write
@@ -39,3 +44,5 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+```
+
