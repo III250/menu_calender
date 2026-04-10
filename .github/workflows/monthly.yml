@@ -39,7 +39,3 @@ jobs:
       - name: Commit & Push
         run: python upload_ics_to_notion.py
 ```
-
-
-
-
