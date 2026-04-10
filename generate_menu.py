@@ -1,3 +1,4 @@
+```python
 import os
 import json
 import calendar
@@ -50,7 +51,17 @@ def save_state(state):
 
 
 # ===============================
-# Notionからメニュー取得（完全対応版）
+# 共通：rich_text取得
+# ===============================
+
+def get_rich_text(props, key):
+    if key in props and props[key]["rich_text"]:
+        return "".join(t["plain_text"] for t in props[key]["rich_text"])
+    return ""
+
+
+# ===============================
+# Notionからメニュー取得（3材料対応版）
 # ===============================
 
 def load_menu():
@@ -88,24 +99,22 @@ def load_menu():
                     c["name"] for c in props["分類"]["multi_select"]
                 ]
 
-            # 材料
-            materials = ""
-            if "材料" in props and props["材料"]["rich_text"]:
-                materials = "".join(
-                    t["plain_text"] for t in props["材料"]["rich_text"]
-                )
+            # 材料（分割対応）
+            materials_main = get_rich_text(props, "材料")
+            materials_buy = get_rich_text(props, "購入材料")
+            materials_net = get_rich_text(props, "常備材料(ネットスーパー)")
+            materials_coop = get_rich_text(props, "常備材料(コープ)")
 
             # レシピ
-            recipe = ""
-            if "レシピ" in props and props["レシピ"]["rich_text"]:
-                recipe = "".join(
-                    t["plain_text"] for t in props["レシピ"]["rich_text"]
-                )
+            recipe = get_rich_text(props, "レシピ")
 
             menus.append({
                 "name": name,
                 "categories": categories,
-                "materials": materials,
+                "materials_main": materials_main,
+                "materials_buy": materials_buy,
+                "materials_net": materials_net,
+                "materials_coop": materials_coop,
                 "recipe": recipe
             })
 
@@ -214,9 +223,20 @@ def create_ics(sequence, year, month):
 
             description = ""
 
-            if menu["materials"]:
-                description += "【材料】\\n" + escape(menu["materials"]) + "\\n\\n"
+            # 材料（分割出力）
+            if menu["materials_main"]:
+                description += "【材料】\\n" + escape(menu["materials_main"]) + "\\n\\n"
 
+            if menu["materials_buy"]:
+                description += "【購入材料】\\n" + escape(menu["materials_buy"]) + "\\n\\n"
+
+            if menu["materials_net"]:
+                description += "【常備材料(ネットスーパー)】\\n" + escape(menu["materials_net"]) + "\\n\\n"
+
+            if menu["materials_coop"]:
+                description += "【常備材料(コープ)】\\n" + escape(menu["materials_coop"]) + "\\n\\n"
+
+            # レシピ
             if menu["recipe"]:
                 description += "【レシピ】\\n" + escape(menu["recipe"])
 
@@ -259,3 +279,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
+
